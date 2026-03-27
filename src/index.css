@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+@theme {
+  --color-electric: #00D4FF;
+  --color-electric-dark: #00A8CC;
+  --color-gold: #FFD700;
+  --color-gold-dim: #B8960F;
+  --color-dark: #0A0A0F;
+  --color-dark-card: #12121A;
+  --color-dark-lighter: #1A1A2E;
+  --color-dark-border: #2A2A3E;
+  --font-inter: 'Inter', sans-serif;
+  --font-poppins: 'Poppins', sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: var(--font-inter);
+  background: var(--color-dark);
+  color: #ffffff;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-dark);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-electric);
+  border-radius: 3px;
+}
+
+::selection {
+  background: rgba(0, 212, 255, 0.3);
+  color: #fff;
+}
+
+canvas {
+  touch-action: none;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #00D4FF, #FFD700);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.glow-electric {
+  box-shadow: 0 0 30px rgba(0, 212, 255, 0.3), 0 0 60px rgba(0, 212, 255, 0.1);
+}
+
+.glow-gold {
+  box-shadow: 0 0 30px rgba(255, 215, 0, 0.3), 0 0 60px rgba(255, 215, 0, 0.1);
+}
