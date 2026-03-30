@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /private/
+Disallow: /tmp/
+Crawl-delay: 1
+
+Sitemap: https://www.auricjewels.com/sitemap.xml
