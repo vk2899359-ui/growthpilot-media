@@ -237,22 +237,14 @@ async function sendWelcomeMenu(to, name) {
   ]);
 }
 
-// ─── Handle Category Response (Image + Text) ────────────────
+// ─── Handle Category Response (Link + Text + Buttons) ───────
 async function handleCategoryResponse(to, text, categorySlug) {
-  const imageUrl = PRODUCT_IMAGES[categorySlug];
   const catInfo = CATEGORIES[categorySlug];
 
-  // Send image first if available
-  if (imageUrl) {
-    const caption = catInfo
-      ? `${catInfo.emoji} ${catInfo.label} Collection | Auric Jewels\n🔗 ${catInfo.url}`
-      : "Auric Jewels Collection ✨";
-    await sendImage(to, imageUrl, caption);
-  }
-
-  // Then send text reply with buttons
   if (catInfo) {
-    await sendButtons(to, text, [
+    // Send text with website link
+    const fullMsg = `${text}\n\n${catInfo.emoji} *Browse ${catInfo.label}:*\n${catInfo.url}`;
+    await sendButtons(to, fullMsg, [
       { id: `cat_${categorySlug}`, title: `${catInfo.emoji} View More` },
       { id: "book_appointment", title: "📅 Book Visit" },
       { id: "browse_catalog", title: "💎 More Collections" }
