@@ -161,14 +161,24 @@ async function sendText(to, text) {
 
 // ─── Send Image Message ─────────────────────────────────────
 async function sendImage(to, imageUrl, caption) {
-  await fetch(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messaging_product: "whatsapp", to, type: "image",
-      image: { link: imageUrl, caption: caption || "" }
-    })
-  });
+  try {
+    const resp = await fetch(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp", to, type: "image",
+        image: { link: imageUrl, caption: caption || "" }
+      })
+    });
+    const result = await resp.json();
+    if (result.error) {
+      console.error("WhatsApp image error:", JSON.stringify(result.error));
+      // Fallback: send link as text instead
+      await sendText(to, `${caption}\n\n🔗 View: ${imageUrl}`);
+    }
+  } catch (e) {
+    console.error("sendImage failed:", e.message);
+  }
 }
 
 // ─── Send Interactive Buttons ───────────────────────────────
