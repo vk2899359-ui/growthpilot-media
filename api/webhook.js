@@ -62,76 +62,20 @@ function catalogText() {
   return t;
 }
 
-// ─── Image Cache from Saleor ────────────────────────────────
-let imageCache = null;
-let imageCacheTime = 0;
-const CACHE_TTL = 30 * 60 * 1000;
-
-async function fetchImages() {
-  if (imageCache && Date.now() - imageCacheTime < CACHE_TTL) return imageCache;
-  try {
-    const imgs = {};
-
-    // Try category background images
-    const catRes = await fetch(SALEOR_API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SALEOR_TOKEN },
-      body: JSON.stringify({
-        query: `{ categories(first: 20) { edges { node { slug name backgroundImage { url } } } } }`
-      })
-    });
-    const catData = await catRes.json();
-    if (catData?.data?.categories?.edges) {
-      for (const edge of catData.data.categories.edges) {
-        const n = edge.node;
-        if (n.backgroundImage?.url) imgs[n.slug] = { url: n.backgroundImage.url, name: n.name };
-      }
-    }
-
-    // Try collection background images
-    const colRes = await fetch(SALEOR_API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SALEOR_TOKEN },
-      body: JSON.stringify({
-        query: `{ collections(first: 20) { edges { node { slug name backgroundImage { url } } } } }`
-      })
-    });
-    const colData = await colRes.json();
-    if (colData?.data?.collections?.edges) {
-      for (const edge of colData.data.collections.edges) {
-        const n = edge.node;
-        if (n.backgroundImage?.url) imgs[n.slug] = { url: n.backgroundImage.url, name: n.name };
-      }
-    }
-
-    // Fetch product images per category (first product with thumbnail)
-    const prodRes = await fetch(SALEOR_API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SALEOR_TOKEN },
-      body: JSON.stringify({
-        query: `{ categories(first: 20) { edges { node { slug name products(first: 1) { edges { node { thumbnail(size: 512) { url alt } name } } } } } } }`
-      })
-    });
-    const prodData = await prodRes.json();
-    if (prodData?.data?.categories?.edges) {
-      for (const edge of prodData.data.categories.edges) {
-        const n = edge.node;
-        // Only use product image if no category background image exists
-        if (!imgs[n.slug] && n.products?.edges?.[0]?.node?.thumbnail?.url) {
-          const prod = n.products.edges[0].node;
-          imgs[n.slug] = { url: prod.thumbnail.url, name: prod.name };
-        }
-      }
-    }
-
-    imageCache = imgs;
-    imageCacheTime = Date.now();
-    return imgs;
-  } catch (e) {
-    console.error("Image fetch error:", e);
-    return imageCache || {};
-  }
-}
+// ─── Product Images (hardcoded for reliability) ─────────────
+const PRODUCT_IMAGES = {
+  "rings":        "https://storage.googleapis.com/jewelscraft-media/products/BIDG0412R02_YAA18DIG6XXXXXXXX_ABCD00-PICS-00001-1024-85179.webp",
+  "earrings":     "https://storage.googleapis.com/jewelscraft-media/products/KE07049-2Y0000_1_lar.jpg",
+  "necklaces":    "https://storage.googleapis.com/jewelscraft-media/products/BISP0428N44_YAA18DIG6XXXXXXXX_ABCD00-PICS-00003-1024-41547.webp",
+  "pendants":     "https://storage.googleapis.com/jewelscraft-media/products/BISM0012P02_YAA18NAV2DIG6RUBY_ABCD00-PICS-00004-1024-3234.webp",
+  "chains":       "https://storage.googleapis.com/jewelscraft-media/products/JS00777-1YP900_1_lar.jpg",
+  "bracelets":    "https://storage.googleapis.com/jewelscraft-media/products/JT02017-1YP900_1_lar.jpg",
+  "bangles":      "https://storage.googleapis.com/jewelscraft-media/products/BIDG0412R03_YAA18DIG6XXXXXXXX_ABCD00-PICS-00001-1024-85178.webp",
+  "solitaire":    "https://storage.googleapis.com/jewelscraft-media/products/BIDG0412R02_YAA18DIG6XXXXXXXX_ABCD00-PICS-00001-1024-85179.webp",
+  "for-her":      "https://storage.googleapis.com/jewelscraft-media/products/BISP0428N44_YAA18DIG6XXXXXXXX_ABCD00-PICS-00003-1024-41547.webp",
+  "for-him":      "https://storage.googleapis.com/jewelscraft-media/products/JS00777-1YP900_1_lar.jpg",
+  "best-sellers": "https://storage.googleapis.com/jewelscraft-media/products/KE07049-2Y0000_1_lar.jpg",
+};
 
 // ─── System Prompt ──────────────────────────────────────────
 const SYSTEM_PROMPT = `You are the virtual jewellery consultant for Auric Jewels, a luxury gold and diamond jewellery showroom in Sector 45, Gurugram.
@@ -285,19 +229,18 @@ async function sendWelcomeMenu(to, name) {
 
 // ─── Handle Category Response (Image + Text) ────────────────
 async function handleCategoryResponse(to, text, categorySlug) {
-  const images = await fetchImages();
-  const catImage = images[categorySlug];
+  const imageUrl = PRODUCT_IMAGES[categorySlug];
   const catInfo = CATEGORIES[categorySlug];
 
   // Send image first if available
-  if (catImage) {
+  if (imageUrl) {
     const caption = catInfo
-      ? `${catInfo.emoji} ${catInfo.label} Collection\n🔗 ${catInfo.url}`
-      : `${catImage.name} Collection`;
-    await sendImage(to, catImage.url, caption);
+      ? `${catInfo.emoji} ${catInfo.label} Collection | Auric Jewels\n🔗 ${catInfo.url}`
+      : "Auric Jewels Collection ✨";
+    await sendImage(to, imageUrl, caption);
   }
 
-  // Then send text reply with browse button
+  // Then send text reply with buttons
   if (catInfo) {
     await sendButtons(to, text, [
       { id: `cat_${categorySlug}`, title: `${catInfo.emoji} View More` },
