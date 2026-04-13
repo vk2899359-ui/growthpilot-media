@@ -70,42 +70,63 @@ const CACHE_TTL = 30 * 60 * 1000;
 async function fetchImages() {
   if (imageCache && Date.now() - imageCacheTime < CACHE_TTL) return imageCache;
   try {
+    const imgs = {};
+
+    // Try category background images
     const catRes = await fetch(SALEOR_API, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SALEOR_TOKEN },
       body: JSON.stringify({
-        query: `{ categories(first: 20) { edges { node { slug name backgroundImage { url alt } } } } }`
+        query: `{ categories(first: 20) { edges { node { slug name backgroundImage { url } } } } }`
       })
     });
     const catData = await catRes.json();
-    const cats = {};
     if (catData?.data?.categories?.edges) {
       for (const edge of catData.data.categories.edges) {
-        const node = edge.node;
-        if (node.backgroundImage?.url) {
-          cats[node.slug] = { url: node.backgroundImage.url, alt: node.backgroundImage.alt || node.name, name: node.name };
-        }
+        const n = edge.node;
+        if (n.backgroundImage?.url) imgs[n.slug] = { url: n.backgroundImage.url, name: n.name };
       }
     }
+
+    // Try collection background images
     const colRes = await fetch(SALEOR_API, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SALEOR_TOKEN },
       body: JSON.stringify({
-        query: `{ collections(first: 20) { edges { node { slug name backgroundImage { url alt } } } } }`
+        query: `{ collections(first: 20) { edges { node { slug name backgroundImage { url } } } } }`
       })
     });
     const colData = await colRes.json();
     if (colData?.data?.collections?.edges) {
       for (const edge of colData.data.collections.edges) {
-        const node = edge.node;
-        if (node.backgroundImage?.url) {
-          cats[node.slug] = { url: node.backgroundImage.url, alt: node.backgroundImage.alt || node.name, name: node.name };
+        const n = edge.node;
+        if (n.backgroundImage?.url) imgs[n.slug] = { url: n.backgroundImage.url, name: n.name };
+      }
+    }
+
+    // Fetch product images per category (first product with thumbnail)
+    const prodRes = await fetch(SALEOR_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SALEOR_TOKEN },
+      body: JSON.stringify({
+        query: `{ categories(first: 20) { edges { node { slug name products(first: 1) { edges { node { thumbnail(size: 512) { url alt } name } } } } } } }`
+      })
+    });
+    const prodData = await prodRes.json();
+    if (prodData?.data?.categories?.edges) {
+      for (const edge of prodData.data.categories.edges) {
+        const n = edge.node;
+        // Only use product image if no category background image exists
+        if (!imgs[n.slug] && n.products?.edges?.[0]?.node?.thumbnail?.url) {
+          const prod = n.products.edges[0].node;
+          imgs[n.slug] = { url: prod.thumbnail.url, name: prod.name };
         }
       }
     }
-    imageCache = cats;
+
+    imageCache = imgs;
     imageCacheTime = Date.now();
-    return cats;
+    return imgs;
   } catch (e) {
     console.error("Image fetch error:", e);
     return imageCache || {};
@@ -372,13 +393,29 @@ module.exports = async function handler(req, res) {
 
         // Check if Claude returned JSON with category
         try {
-          const parsed = JSON.parse(reply);
+          // Extract JSON even if wrapped in backticks or extra text
+          let jsonStr = reply;
+          const jsonMatch = reply.match(/\{[\s\S]*"text"[\s\S]*"category"[\s\S]*\}/);
+          if (jsonMatch) jsonStr = jsonMatch[0];
+          const parsed = JSON.parse(jsonStr);
           if (parsed.text && parsed.category) {
             await handleCategoryResponse(from, parsed.text, parsed.category);
             return res.status(200).json({ status: "ok" });
           }
         } catch (e) {
-          // Not JSON, send as plain text with follow-up buttons
+          // Not JSON — check if raw JSON leaked into reply, clean it
+          if (reply.includes('"category"') && reply.includes('"text"')) {
+            try {
+              const m = reply.match(/\{[\s\S]*\}/);
+              if (m) {
+                const p = JSON.parse(m[0]);
+                if (p.text) {
+                  await handleCategoryResponse(from, p.text, p.category || "");
+                  return res.status(200).json({ status: "ok" });
+                }
+              }
+            } catch (e2) { /* fall through */ }
+          }
         }
 
         // Smart follow-up buttons based on context
