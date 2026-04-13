@@ -153,15 +153,17 @@ Always say "starting from" or "range". Encourage visit for exact pricing.
 3. Appointment Booking — collect: Name, preferred date/time, occasion. Confirm with: "Your appointment is noted! Our team will confirm shortly. We look forward to welcoming you ✨"
 4. Store Info — Sector 45, Gurugram | WhatsApp: +91 90124 95941 | Hours: 10 AM – 8 PM daily
 5. Custom Design — collect requirements, say design team will connect
-6. IMAGES — You CAN share product images! When user asks to see jewellery, ALWAYS respond with the JSON format containing the category. Never say "I can't share images".
+6. IMAGES — The system automatically sends product images when customers ask about specific categories. You don't need to do anything special for images — just write your helpful text reply.
 
 CATEGORY DETECTION:
-The system automatically detects jewellery categories from user messages and sends relevant images. You just focus on writing a helpful, warm reply about the jewellery they asked about. Include price ranges from the catalog above.
+The system handles category detection and image sending automatically. You just write a helpful, warm text reply about the jewellery they asked about. Include price ranges from the catalog above. NEVER output any JSON, code blocks, or structured data — only plain conversational text.
 
 If NO specific category is mentioned, just respond naturally with helpful information.
 
 RULES:
-- NEVER say "I can't share images" or "I'm unable to send photos" — you CAN share images by using the JSON category format
+- NEVER output JSON, code blocks, curly braces, or any structured data format
+- NEVER include {"category"} or {"text"} in your response
+- Just write plain conversational English text — nothing else
 - Discounts: "We focus on value and craftsmanship. Our pricing reflects hallmarked purity. Visit us for seasonal celebrations."
 - Unrelated queries: Politely redirect to jewellery
 - Keep responses SHORT (2-4 lines max) — this is WhatsApp, not email
@@ -418,20 +420,19 @@ module.exports = async function handler(req, res) {
         // Get Claude response (always)
         const reply = await getClaudeResponse(session, userText);
 
-        // Clean any JSON that Claude might have returned
+        // Clean any JSON/code that Claude might have returned
         let cleanReply = reply;
-        if (reply.includes('"text"') && reply.includes('"category"')) {
-          try {
-            const m = reply.match(/\{[\s\S]*?\}/);
-            if (m) {
-              const p = JSON.parse(m[0]);
-              if (p.text) cleanReply = p.text;
-            }
-          } catch (e) {
-            // Remove raw JSON fragments
-            cleanReply = reply.replace(/\{[^}]*"text"[^}]*"category"[^}]*\}/g, "").trim();
-            if (!cleanReply) cleanReply = reply.replace(/[{}"]/g, "").replace(/text:|category:\s*\w+/g, "").trim();
-          }
+        // Remove markdown code blocks
+        cleanReply = cleanReply.replace(/```json[\s\S]*?```/gi, "").trim();
+        cleanReply = cleanReply.replace(/```[\s\S]*?```/gi, "").trim();
+        // Remove JSON objects like {"text": "...", "category": "..."}
+        cleanReply = cleanReply.replace(/\{[\s\S]*?"category"[\s\S]*?\}/g, "").trim();
+        cleanReply = cleanReply.replace(/\{[\s\S]*?"text"[\s\S]*?\}/g, "").trim();
+        // Remove standalone json word
+        cleanReply = cleanReply.replace(/^json\s*/gim, "").trim();
+        // If cleanup removed everything, use original minus JSON
+        if (!cleanReply || cleanReply.length < 10) {
+          cleanReply = reply.replace(/[{}"\n]/g, " ").replace(/category\s*:\s*\w+/gi, "").replace(/text\s*:/gi, "").replace(/\s+/g, " ").trim();
         }
 
         // If category detected → send image + text
