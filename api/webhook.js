@@ -4,6 +4,21 @@ const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const SALEOR_API = "https://auric.thecodemesh.online/graphql/";
 const SALEOR_TOKEN = process.env.SALEOR_TOKEN || "fAPR16BVrzI4thcLtj8c4tUUG1wGU6";
+const GOOGLE_SHEETS_URL = process.env.GOOGLE_SHEETS_URL;
+
+// ─── Log to Google Sheets CRM ───────────────────────────────
+async function logToSheets(data) {
+  if (!GOOGLE_SHEETS_URL) return;
+  try {
+    await fetch(GOOGLE_SHEETS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+  } catch (e) {
+    console.error("Sheets log error:", e.message);
+  }
+}
 
 // ─── Session Memory (30 min per user) ───────────────────────
 const sessions = new Map();
@@ -415,6 +430,9 @@ module.exports = async function handler(req, res) {
             await sendText(from, cleanReply);
           }
         }
+
+        // Log to Google Sheets CRM
+        logToSheets({ name: session.name, phone: from, source: "WhatsApp Bot", query: userText, reply: cleanReply.substring(0, 200) });
 
         return res.status(200).json({ status: "ok" });
       }
