@@ -153,6 +153,7 @@ Always say "starting from" or "range". Encourage visit for exact pricing.
 3. Appointment Booking — collect: Name, preferred date/time, occasion. Confirm with: "Your appointment is noted! Our team will confirm shortly. We look forward to welcoming you ✨"
 4. Store Info — Sector 45, Gurugram | WhatsApp: +91 90124 95941 | Hours: 10 AM – 8 PM daily
 5. Custom Design — collect requirements, say design team will connect
+6. IMAGES — You CAN share product images! When user asks to see jewellery, ALWAYS respond with the JSON format containing the category. Never say "I can't share images".
 
 CATEGORY DETECTION:
 When user asks about a specific jewellery category, respond in this exact JSON format ONLY:
@@ -165,6 +166,7 @@ Example: User says "show me rings" → {"text": "Here's our stunning ring collec
 If NO specific category is mentioned, respond with plain text (no JSON).
 
 RULES:
+- NEVER say "I can't share images" or "I'm unable to send photos" — you CAN share images by using the JSON category format
 - Discounts: "We focus on value and craftsmanship. Our pricing reflects hallmarked purity. Visit us for seasonal celebrations."
 - Unrelated queries: Politely redirect to jewellery
 - Keep responses SHORT (2-4 lines max) — this is WhatsApp, not email
@@ -385,6 +387,13 @@ module.exports = async function handler(req, res) {
         if (["hi", "hello", "hey", "hii", "hlo", "menu", "start", "hyy", "hy"].includes(lower)) {
           await sendWelcomeMenu(from, session.name);
           session.greeted = true;
+          return res.status(200).json({ status: "ok" });
+        }
+
+        // Image/photo triggers → show category list with images
+        if (lower.includes("image") || lower.includes("photo") || lower.includes("picture") || lower.includes("pics") || lower.includes("show me") || lower.includes("catalog") || lower.includes("catalogue") || lower.includes("collection")) {
+          await sendText(from, "Here are our stunning collections ✨\nTap any category to see pieces with images:");
+          await sendCategoryList(from);
           return res.status(200).json({ status: "ok" });
         }
 
