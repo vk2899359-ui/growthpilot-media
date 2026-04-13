@@ -156,14 +156,9 @@ Always say "starting from" or "range". Encourage visit for exact pricing.
 6. IMAGES — You CAN share product images! When user asks to see jewellery, ALWAYS respond with the JSON format containing the category. Never say "I can't share images".
 
 CATEGORY DETECTION:
-When user asks about a specific jewellery category, respond in this exact JSON format ONLY:
-{"text": "your reply message here", "category": "category-slug-here"}
+The system automatically detects jewellery categories from user messages and sends relevant images. You just focus on writing a helpful, warm reply about the jewellery they asked about. Include price ranges from the catalog above.
 
-Valid category slugs: rings, earrings, necklaces, pendants, chains, bracelets, bangles, solitaire, for-her, for-him, best-sellers
-
-Example: User says "show me rings" → {"text": "Here's our stunning ring collection! 💍 From solitaire diamonds to everyday gold bands, we have something for every occasion.", "category": "rings"}
-
-If NO specific category is mentioned, respond with plain text (no JSON).
+If NO specific category is mentioned, just respond naturally with helpful information.
 
 RULES:
 - NEVER say "I can't share images" or "I'm unable to send photos" — you CAN share images by using the JSON category format
@@ -390,41 +385,59 @@ module.exports = async function handler(req, res) {
           return res.status(200).json({ status: "ok" });
         }
 
-        // Image/photo triggers → show category list with images
-        if (lower.includes("image") || lower.includes("photo") || lower.includes("picture") || lower.includes("pics") || lower.includes("show me") || lower.includes("catalog") || lower.includes("catalogue") || lower.includes("collection")) {
+        // Image/photo generic triggers → show category list
+        if ((lower.includes("image") || lower.includes("photo") || lower.includes("picture") || lower.includes("pics") || lower.includes("catalog") || lower.includes("catalogue")) && !lower.includes("ring") && !lower.includes("necklace") && !lower.includes("earring") && !lower.includes("bangle") && !lower.includes("bracelet") && !lower.includes("pendant") && !lower.includes("chain") && !lower.includes("bridal") && !lower.includes("solitaire")) {
           await sendText(from, "Here are our stunning collections ✨\nTap any category to see pieces with images:");
           await sendCategoryList(from);
           return res.status(200).json({ status: "ok" });
         }
 
-        // Get Claude response
+        // Detect specific category from user message → send image + Claude reply
+        const categoryKeywords = {
+          "rings": ["ring", "rings", "engagement ring", "wedding ring", "solitaire ring"],
+          "earrings": ["earring", "earrings", "jhumka", "studs", "chandbali", "tops"],
+          "necklaces": ["necklace", "necklaces", "haar", "choker", "chain set"],
+          "pendants": ["pendant", "pendants", "locket"],
+          "chains": ["chain", "chains"],
+          "bracelets": ["bracelet", "bracelets", "kada"],
+          "bangles": ["bangle", "bangles", "chudi"],
+          "solitaire": ["solitaire", "solitaires"],
+          "for-her": ["for her", "women", "ladies", "bridal", "bride", "wedding"],
+          "for-him": ["for him", "men", "gents", "male"],
+          "best-sellers": ["best seller", "bestseller", "popular", "trending"],
+        };
+
+        let detectedCategory = null;
+        for (const [catSlug, keywords] of Object.entries(categoryKeywords)) {
+          if (keywords.some(kw => lower.includes(kw))) {
+            detectedCategory = catSlug;
+            break;
+          }
+        }
+
+        // Get Claude response (always)
         const reply = await getClaudeResponse(session, userText);
 
-        // Check if Claude returned JSON with category
-        try {
-          // Extract JSON even if wrapped in backticks or extra text
-          let jsonStr = reply;
-          const jsonMatch = reply.match(/\{[\s\S]*"text"[\s\S]*"category"[\s\S]*\}/);
-          if (jsonMatch) jsonStr = jsonMatch[0];
-          const parsed = JSON.parse(jsonStr);
-          if (parsed.text && parsed.category) {
-            await handleCategoryResponse(from, parsed.text, parsed.category);
-            return res.status(200).json({ status: "ok" });
+        // Clean any JSON that Claude might have returned
+        let cleanReply = reply;
+        if (reply.includes('"text"') && reply.includes('"category"')) {
+          try {
+            const m = reply.match(/\{[\s\S]*?\}/);
+            if (m) {
+              const p = JSON.parse(m[0]);
+              if (p.text) cleanReply = p.text;
+            }
+          } catch (e) {
+            // Remove raw JSON fragments
+            cleanReply = reply.replace(/\{[^}]*"text"[^}]*"category"[^}]*\}/g, "").trim();
+            if (!cleanReply) cleanReply = reply.replace(/[{}"]/g, "").replace(/text:|category:\s*\w+/g, "").trim();
           }
-        } catch (e) {
-          // Not JSON — check if raw JSON leaked into reply, clean it
-          if (reply.includes('"category"') && reply.includes('"text"')) {
-            try {
-              const m = reply.match(/\{[\s\S]*\}/);
-              if (m) {
-                const p = JSON.parse(m[0]);
-                if (p.text) {
-                  await handleCategoryResponse(from, p.text, p.category || "");
-                  return res.status(200).json({ status: "ok" });
-                }
-              }
-            } catch (e2) { /* fall through */ }
-          }
+        }
+
+        // If category detected → send image + text
+        if (detectedCategory) {
+          await handleCategoryResponse(from, cleanReply, detectedCategory);
+          return res.status(200).json({ status: "ok" });
         }
 
         // Smart follow-up buttons based on context
@@ -433,13 +446,13 @@ module.exports = async function handler(req, res) {
         const hasVisit = lower.includes("visit") || lower.includes("showroom") || lower.includes("store") || lower.includes("address") || lower.includes("location");
 
         if (hasVisit || hasBridal) {
-          await sendButtons(from, reply, [
+          await sendButtons(from, cleanReply, [
             { id: "book_appointment", title: "📅 Book Visit" },
             { id: "browse_catalog", title: "💎 Browse More" },
             { id: "bridal_inquiry", title: "👰 Bridal Sets" }
           ]);
         } else if (hasPrice) {
-          await sendButtons(from, reply, [
+          await sendButtons(from, cleanReply, [
             { id: "browse_catalog", title: "💎 View Collections" },
             { id: "book_appointment", title: "📅 Visit Store" },
             { id: "bridal_inquiry", title: "👰 Bridal Range" }
@@ -447,13 +460,13 @@ module.exports = async function handler(req, res) {
         } else {
           // Regular reply — add buttons after every 3rd message for engagement
           if (session.messages.length % 6 === 0) {
-            await sendButtons(from, reply, [
+            await sendButtons(from, cleanReply, [
               { id: "browse_catalog", title: "💎 Browse Collection" },
               { id: "book_appointment", title: "📅 Book Visit" },
               { id: "bridal_inquiry", title: "👰 Bridal" }
             ]);
           } else {
-            await sendText(from, reply);
+            await sendText(from, cleanReply);
           }
         }
 
