@@ -395,7 +395,9 @@ module.exports = async function handler(req, res) {
           cleanReply = reply.replace(/[{}"\n]/g, " ").replace(/category\s*:\s*\w+/gi, "").replace(/text\s*:/gi, "").replace(/\s+/g, " ").trim();
         }
 
-        // If category detected → send image + text
+        try { await storeMessage(from, userText, cleanReply); } catch(e) { console.log("Store err:", e.message); }
+
+      // If category detected → send image + text
         if (detectedCategory) {
           await handleCategoryResponse(from, cleanReply, detectedCategory);
           return res.status(200).json({ status: "ok" });
