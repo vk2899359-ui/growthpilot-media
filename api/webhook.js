@@ -1,5 +1,5 @@
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-import { storeMessage } from './lib/storage';
+const { storeMessage } = require('./lib/storage');
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
