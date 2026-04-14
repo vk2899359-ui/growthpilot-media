@@ -1,4 +1,5 @@
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+import { storeMessage } from './lib/storage';
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -22,8 +23,7 @@ async function logToSheets(data) {
 
 // ─── Session Memory (30 min per user) ───────────────────────
 const sessions = new Map();
-const SESSION_TTL = 30 * 60 * 1000;
-
+const SESSION_TTL = 30 * 60 * 1000;  
 function getSession(phone) {
   const s = sessions.get(phone);
   if (s && Date.now() - s.lastActive < SESSION_TTL) {
@@ -400,7 +400,7 @@ module.exports = async function handler(req, res) {
           await handleCategoryResponse(from, cleanReply, detectedCategory);
           return res.status(200).json({ status: "ok" });
         }
-
+         await storeMessage(from, userText, cleanReply);
         // Smart follow-up buttons based on context
         const hasPrice = lower.includes("price") || lower.includes("rate") || lower.includes("cost") || lower.includes("budget") || lower.includes("kitna") || lower.includes("range");
         const hasBridal = lower.includes("bridal") || lower.includes("wedding") || lower.includes("bride") || lower.includes("shaadi");
