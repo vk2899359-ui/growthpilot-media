@@ -306,18 +306,21 @@ module.exports = async function handler(req, res) {
 
         if (btnId === "browse_catalog") {
           await sendCategoryList(from);
+          try { await storeMessage(from, "[Tapped: Browse Collection]", "Sent category list"); } catch(e) { console.log("Store err:", e.message); }
           return res.status(200).json({ status: "ok" });
         }
 
         if (btnId === "book_appointment") {
           const reply = await getClaudeResponse(session, "I want to book an appointment to visit the showroom.");
           await sendText(from, reply);
+          try { await storeMessage(from, "[Tapped: Book Appointment]", reply); } catch(e) { console.log("Store err:", e.message); }
           return res.status(200).json({ status: "ok" });
         }
 
         if (btnId === "bridal_inquiry") {
           const reply = await getClaudeResponse(session, "I am looking for bridal jewellery for my wedding.");
           await handleCategoryResponse(from, reply, "for-her");
+          try { await storeMessage(from, "[Tapped: Bridal Jewellery]", reply); } catch(e) { console.log("Store err:", e.message); }
           return res.status(200).json({ status: "ok" });
         }
 
@@ -328,6 +331,7 @@ module.exports = async function handler(req, res) {
           if (cat) {
             const reply = await getClaudeResponse(session, `Show me ${cat.label} collection with prices.`);
             await handleCategoryResponse(from, reply, catKey);
+            try { await storeMessage(from, `[Selected: ${cat.label}]`, reply); } catch(e) { console.log("Store err:", e.message); }
             return res.status(200).json({ status: "ok" });
           }
         }
@@ -344,6 +348,7 @@ module.exports = async function handler(req, res) {
         if (["hi", "hello", "hey", "hii", "hlo", "menu", "start", "hyy", "hy"].includes(lower)) {
           await sendWelcomeMenu(from, session.name);
           session.greeted = true;
+          try { await storeMessage(from, userText, "Welcome menu sent"); } catch(e) { console.log("Store err:", e.message); }
           return res.status(200).json({ status: "ok" });
         }
 
@@ -351,6 +356,7 @@ module.exports = async function handler(req, res) {
         if ((lower.includes("image") || lower.includes("photo") || lower.includes("picture") || lower.includes("pics") || lower.includes("catalog") || lower.includes("catalogue")) && !lower.includes("ring") && !lower.includes("necklace") && !lower.includes("earring") && !lower.includes("bangle") && !lower.includes("bracelet") && !lower.includes("pendant") && !lower.includes("chain") && !lower.includes("bridal") && !lower.includes("solitaire")) {
           await sendText(from, "Here are our stunning collections ✨\nTap any category to see pieces with images:");
           await sendCategoryList(from);
+          try { await storeMessage(from, userText, "Sent category catalog"); } catch(e) { console.log("Store err:", e.message); }
           return res.status(200).json({ status: "ok" });
         }
 
@@ -395,14 +401,13 @@ module.exports = async function handler(req, res) {
           cleanReply = reply.replace(/[{}"\n]/g, " ").replace(/category\s*:\s*\w+/gi, "").replace(/text\s*:/gi, "").replace(/\s+/g, " ").trim();
         }
 
-        try { await storeMessage(from, userText, cleanReply); } catch(e) { console.log("Store err:", e.message); }
-
-      // If category detected → send image + text
+        // If category detected → send image + text
         if (detectedCategory) {
           await handleCategoryResponse(from, cleanReply, detectedCategory);
+          try { await storeMessage(from, userText, cleanReply); } catch(e) { console.log("Store err:", e.message); }
           return res.status(200).json({ status: "ok" });
         }
-         await storeMessage(from, userText, cleanReply);
+
         // Smart follow-up buttons based on context
         const hasPrice = lower.includes("price") || lower.includes("rate") || lower.includes("cost") || lower.includes("budget") || lower.includes("kitna") || lower.includes("range");
         const hasBridal = lower.includes("bridal") || lower.includes("wedding") || lower.includes("bride") || lower.includes("shaadi");
@@ -433,6 +438,9 @@ module.exports = async function handler(req, res) {
           }
         }
 
+        // Store message in Redis
+        try { await storeMessage(from, userText, cleanReply); } catch(e) { console.log("Store err:", e.message); }
+
         // Log to Google Sheets CRM
         logToSheets({ name: session.name, phone: from, source: "WhatsApp Bot", query: userText, reply: cleanReply.substring(0, 200) });
 
@@ -449,6 +457,7 @@ module.exports = async function handler(req, res) {
           { id: "book_appointment", title: "📅 Discuss in Store" },
           { id: "browse_catalog", title: "💎 Browse Similar" }
         ]);
+        try { await storeMessage(from, "[Sent image/document]", reply); } catch(e) { console.log("Store err:", e.message); }
         return res.status(200).json({ status: "ok" });
       }
 
