@@ -1,8 +1,9 @@
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 async function storeMessage(phone, userMsg, botReply) { var url = process.env.KV_REST_API_URL; var token = process.env.KV_REST_API_TOKEN; if (!url || !token) { console.log('No Redis config'); return; } try { var ts = Date.now(); var data = JSON.stringify({ phone: phone, userMsg: userMsg, botReply: botReply, timestamp: new Date().toISOString(), ts: ts }); await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(['SET', 'chat:' + phone + ':' + ts, data, 'EX', '7776000']) }); var raw = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(['GET', 'contacts']) }); var rd = await raw.json(); var contacts = rd.result ? JSON.parse(rd.result) : {}; contacts[phone] = { lastMsg: userMsg, lastTime: new Date().toISOString(), count: (contacts[phone] ? contacts[phone].count : 0) + 1 }; await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(['SET', 'contacts', JSON.stringify(contacts)]) }); console.log('Stored in Redis:', phone); } catch(e) { console.log('Redis error:', e.message); } }
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const SALEOR_API = "https://auric.thecodemesh.online/graphql/";
 const SALEOR_TOKEN = process.env.SALEOR_TOKEN || "fAPR16BVrzI4thcLtj8c4tUUG1wGU6";
 const GOOGLE_SHEETS_URL = process.env.GOOGLE_SHEETS_URL;
@@ -129,28 +130,30 @@ RULES:
 - If someone shares a budget, recommend matching categories
 - For bridal queries: Ask wedding date, style preference (traditional/modern/fusion), metals preferred`;
 
-// ─── Claude API with Session Memory ─────────────────────────
-async function getClaudeResponse(session, userMessage) {
+// ─── Gemini API with Session Memory ─────────────────────────
+async function getGeminiResponse(session, userMessage) {
   session.messages.push({ role: "user", content: userMessage });
   if (session.messages.length > 20) session.messages = session.messages.slice(-20);
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 400,
-      system: SYSTEM_PROMPT,
-      messages: session.messages
-    })
+  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-1.5-flash",
+    systemInstruction: SYSTEM_PROMPT
   });
 
-  const data = await res.json();
-  const reply = data?.content?.[0]?.text || "Thank you for reaching out! Please try again. ✨";
+  // Convert session history to Gemini format (exclude the last user message — sent via sendMessage)
+  const history = session.messages.slice(0, -1).map(m => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.content }]
+  }));
+
+  const chat = model.startChat({
+    history,
+    generationConfig: { maxOutputTokens: 400 }
+  });
+
+  const result = await chat.sendMessage(userMessage);
+  const reply = result.response.text() || "Thank you for reaching out! Please try again. ✨";
   session.messages.push({ role: "assistant", content: reply });
 
   // Try to extract name from conversation
@@ -311,14 +314,14 @@ module.exports = async function handler(req, res) {
         }
 
         if (btnId === "book_appointment") {
-          const reply = await getClaudeResponse(session, "I want to book an appointment to visit the showroom.");
+          const reply = await getGeminiResponse(session, "I want to book an appointment to visit the showroom.");
           await sendText(from, reply);
           try { await storeMessage(from, "[Tapped: Book Appointment]", reply); } catch(e) { console.log("Store err:", e.message); }
           return res.status(200).json({ status: "ok" });
         }
 
         if (btnId === "bridal_inquiry") {
-          const reply = await getClaudeResponse(session, "I am looking for bridal jewellery for my wedding.");
+          const reply = await getGeminiResponse(session, "I am looking for bridal jewellery for my wedding.");
           await handleCategoryResponse(from, reply, "for-her");
           try { await storeMessage(from, "[Tapped: Bridal Jewellery]", reply); } catch(e) { console.log("Store err:", e.message); }
           return res.status(200).json({ status: "ok" });
@@ -329,7 +332,7 @@ module.exports = async function handler(req, res) {
           const catKey = btnId.replace("cat_", "");
           const cat = CATEGORIES[catKey];
           if (cat) {
-            const reply = await getClaudeResponse(session, `Show me ${cat.label} collection with prices.`);
+            const reply = await getGeminiResponse(session, `Show me ${cat.label} collection with prices.`);
             await handleCategoryResponse(from, reply, catKey);
             try { await storeMessage(from, `[Selected: ${cat.label}]`, reply); } catch(e) { console.log("Store err:", e.message); }
             return res.status(200).json({ status: "ok" });
@@ -384,7 +387,7 @@ module.exports = async function handler(req, res) {
         }
 
         // Get Claude response (always)
-        const reply = await getClaudeResponse(session, userText);
+        const reply = await getGeminiResponse(session, userText);
 
         // Clean any JSON/code that Claude might have returned
         let cleanReply = reply;
