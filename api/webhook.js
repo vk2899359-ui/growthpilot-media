@@ -1,6 +1,5 @@
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 async function storeMessage(phone, userMsg, botReply) { var url = process.env.KV_REST_API_URL; var token = process.env.KV_REST_API_TOKEN; if (!url || !token) { console.log('No Redis config'); return; } try { var ts = Date.now(); var data = JSON.stringify({ phone: phone, userMsg: userMsg, botReply: botReply, timestamp: new Date().toISOString(), ts: ts }); await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(['SET', 'chat:' + phone + ':' + ts, data, 'EX', '7776000']) }); var raw = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(['GET', 'contacts']) }); var rd = await raw.json(); var contacts = rd.result ? JSON.parse(rd.result) : {}; contacts[phone] = { lastMsg: userMsg, lastTime: new Date().toISOString(), count: (contacts[phone] ? contacts[phone].count : 0) + 1 }; await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(['SET', 'contacts', JSON.stringify(contacts)]) }); console.log('Stored in Redis:', phone); } catch(e) { console.log('Redis error:', e.message); } }
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -135,25 +134,32 @@ async function getGeminiResponse(session, userMessage) {
   session.messages.push({ role: "user", content: userMessage });
   if (session.messages.length > 20) session.messages = session.messages.slice(-20);
 
-  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
-    systemInstruction: SYSTEM_PROMPT
-  });
-
-  // Convert session history to Gemini format (exclude the last user message — sent via sendMessage)
-  const history = session.messages.slice(0, -1).map(m => ({
+  // Convert session history to Gemini REST format
+  const contents = session.messages.map(m => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }]
   }));
 
-  const chat = model.startChat({
-    history,
-    generationConfig: { maxOutputTokens: 400 }
-  });
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents,
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        generationConfig: { maxOutputTokens: 400 }
+      })
+    }
+  );
 
-  const result = await chat.sendMessage(userMessage);
-  const reply = result.response.text() || "Thank you for reaching out! Please try again. ✨";
+  const data = await res.json();
+  if (data.error) {
+    console.error("Gemini API error:", JSON.stringify(data.error));
+    return "Thank you for reaching out! Please try again. ✨";
+  }
+
+  const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Thank you for reaching out! Please try again. ✨";
   session.messages.push({ role: "assistant", content: reply });
 
   // Try to extract name from conversation
