@@ -79,17 +79,17 @@ function catalogText() {
 
 // ─── Product Images ──────────────────────────────────────────
 const PRODUCT_IMAGES = {
-  "rings":        "https://auric.thecodemesh.online/media/products/BIDG0412R02_1.jpg",
-  "earrings":     "https://auric.thecodemesh.online/media/products/KE07049_1.jpg",
-  "necklaces":    "https://auric.thecodemesh.online/media/products/BISP0428N44_1.jpg",
-  "pendants":     "https://auric.thecodemesh.online/media/products/BISM0012P02_1.jpg",
-  "chains":       "https://auric.thecodemesh.online/media/products/JS00777_1.jpg",
-  "bracelets":    "https://auric.thecodemesh.online/media/products/JT02017_1.jpg",
-  "bangles":      "https://auric.thecodemesh.online/media/products/BIDG0412R03_1.jpg",
-  "solitaire":    "https://auric.thecodemesh.online/media/products/BIDG0412R02_1.jpg",
-  "for-her":      "https://auric.thecodemesh.online/media/products/BISP0428N44_1.jpg",
-  "for-him":      "https://auric.thecodemesh.online/media/products/JS00777_1.jpg",
-  "best-sellers": "https://auric.thecodemesh.online/media/products/KE07049_1.jpg",
+  "rings":        "https://www.auricjewels.com/images/rings.jpg",
+  "earrings":     "https://www.auricjewels.com/images/earrings.jpg",
+  "necklaces":    "https://www.auricjewels.com/images/necklaces.jpg",
+  "pendants":     "https://www.auricjewels.com/images/necklaces.jpg",
+  "chains":       "https://www.auricjewels.com/images/for-him.jpg",
+  "bracelets":    "https://www.auricjewels.com/images/bangles.jpg",
+  "bangles":      "https://www.auricjewels.com/images/bangles.jpg",
+  "solitaire":    "https://www.auricjewels.com/images/rings.jpg",
+  "for-her":      "https://www.auricjewels.com/images/bridal.jpg",
+  "for-him":      "https://www.auricjewels.com/images/for-him.jpg",
+  "best-sellers": "https://www.auricjewels.com/images/necklaces.jpg",
 };
 
 // Maps category slug → CATALOG key for price/popular data in captions
@@ -186,10 +186,10 @@ async function getGeminiResponse(session, userMessage) {
   const data = await res.json();
   if (data.error) {
     console.error("Gemini API error:", JSON.stringify(data.error));
-    return "Thank you for reaching out! Please try again. ✨";
+    return null;
   }
 
-  const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Thank you for reaching out! Please try again. ✨";
+  const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
   session.messages.push({ role: "assistant", content: reply });
 
   // Try to extract name from conversation
@@ -227,8 +227,6 @@ async function sendImage(to, imageUrl, caption) {
     const result = await resp.json();
     if (result.error) {
       console.error("WhatsApp image error:", JSON.stringify(result.error));
-      // Fallback: send link as text instead
-      await sendText(to, `${caption}\n\n🔗 View: ${imageUrl}`);
     }
   } catch (e) {
     console.error("sendImage failed:", e.message);
@@ -303,13 +301,15 @@ async function handleCategoryResponse(to, text, categorySlug) {
 
   // 2. Send Gemini text reply + action buttons
   if (catInfo) {
-    const fullMsg = `${text}\n\n${catInfo.emoji} Browse ${catInfo.label}:\n${catInfo.url}`;
-    await sendButtons(to, fullMsg, [
+    const body = text
+      ? `${text}\n\n${catInfo.emoji} Browse ${catInfo.label}:\n${catInfo.url}`
+      : `${catInfo.emoji} Browse ${catInfo.label}:\n${catInfo.url}`;
+    await sendButtons(to, body, [
       { id: `cat_${categorySlug}`, title: `${catInfo.emoji} View More` },
       { id: "book_appointment", title: "📅 Book Visit" },
       { id: "browse_catalog", title: "💎 More Collections" }
     ]);
-  } else {
+  } else if (text) {
     await sendText(to, text);
   }
 }
@@ -428,22 +428,21 @@ module.exports = async function handler(req, res) {
           }
         }
 
-        // Get Claude response (always)
+        // Get Gemini response (always)
         const reply = await getGeminiResponse(session, userText);
 
-        // Clean any JSON/code that Claude might have returned
-        let cleanReply = reply;
-        // Remove markdown code blocks
-        cleanReply = cleanReply.replace(/```json[\s\S]*?```/gi, "").trim();
-        cleanReply = cleanReply.replace(/```[\s\S]*?```/gi, "").trim();
-        // Remove JSON objects like {"text": "...", "category": "..."}
-        cleanReply = cleanReply.replace(/\{[\s\S]*?"category"[\s\S]*?\}/g, "").trim();
-        cleanReply = cleanReply.replace(/\{[\s\S]*?"text"[\s\S]*?\}/g, "").trim();
-        // Remove standalone json word
-        cleanReply = cleanReply.replace(/^json\s*/gim, "").trim();
-        // If cleanup removed everything, use original minus JSON
-        if (!cleanReply || cleanReply.length < 10) {
-          cleanReply = reply.replace(/[{}"\n]/g, " ").replace(/category\s*:\s*\w+/gi, "").replace(/text\s*:/gi, "").replace(/\s+/g, " ").trim();
+        // Clean any JSON/code that Gemini might have returned; null → pass through
+        let cleanReply = null;
+        if (reply) {
+          cleanReply = reply
+            .replace(/```json[\s\S]*?```/gi, "").trim()
+            .replace(/```[\s\S]*?```/gi, "").trim()
+            .replace(/\{[\s\S]*?"category"[\s\S]*?\}/g, "").trim()
+            .replace(/\{[\s\S]*?"text"[\s\S]*?\}/g, "").trim()
+            .replace(/^json\s*/gim, "").trim();
+          if (cleanReply.length < 10) {
+            cleanReply = reply.replace(/[{}"\n]/g, " ").replace(/category\s*:\s*\w+/gi, "").replace(/text\s*:/gi, "").replace(/\s+/g, " ").trim() || null;
+          }
         }
 
         // If category detected → send image + text
