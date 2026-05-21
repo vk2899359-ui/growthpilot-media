@@ -77,20 +77,50 @@ function catalogText() {
   return t;
 }
 
-// ─── Product Images (hardcoded for reliability) ─────────────
+// ─── Product Images ──────────────────────────────────────────
 const PRODUCT_IMAGES = {
-  "rings":        "https://storage.googleapis.com/jewelscraft-media/products/BIDG0412R02_YAA18DIG6XXXXXXXX_ABCD00-PICS-00001-1024-85179.webp",
-  "earrings":     "https://storage.googleapis.com/jewelscraft-media/products/KE07049-2Y0000_1_lar.jpg",
-  "necklaces":    "https://storage.googleapis.com/jewelscraft-media/products/BISP0428N44_YAA18DIG6XXXXXXXX_ABCD00-PICS-00003-1024-41547.webp",
-  "pendants":     "https://storage.googleapis.com/jewelscraft-media/products/BISM0012P02_YAA18NAV2DIG6RUBY_ABCD00-PICS-00004-1024-3234.webp",
-  "chains":       "https://storage.googleapis.com/jewelscraft-media/products/JS00777-1YP900_1_lar.jpg",
-  "bracelets":    "https://storage.googleapis.com/jewelscraft-media/products/JT02017-1YP900_1_lar.jpg",
-  "bangles":      "https://storage.googleapis.com/jewelscraft-media/products/BIDG0412R03_YAA18DIG6XXXXXXXX_ABCD00-PICS-00001-1024-85178.webp",
-  "solitaire":    "https://storage.googleapis.com/jewelscraft-media/products/BIDG0412R02_YAA18DIG6XXXXXXXX_ABCD00-PICS-00001-1024-85179.webp",
-  "for-her":      "https://storage.googleapis.com/jewelscraft-media/products/BISP0428N44_YAA18DIG6XXXXXXXX_ABCD00-PICS-00003-1024-41547.webp",
-  "for-him":      "https://storage.googleapis.com/jewelscraft-media/products/JS00777-1YP900_1_lar.jpg",
-  "best-sellers": "https://storage.googleapis.com/jewelscraft-media/products/KE07049-2Y0000_1_lar.jpg",
+  "rings":        "https://auric.thecodemesh.online/media/products/BIDG0412R02_1.jpg",
+  "earrings":     "https://auric.thecodemesh.online/media/products/KE07049_1.jpg",
+  "necklaces":    "https://auric.thecodemesh.online/media/products/BISP0428N44_1.jpg",
+  "pendants":     "https://auric.thecodemesh.online/media/products/BISM0012P02_1.jpg",
+  "chains":       "https://auric.thecodemesh.online/media/products/JS00777_1.jpg",
+  "bracelets":    "https://auric.thecodemesh.online/media/products/JT02017_1.jpg",
+  "bangles":      "https://auric.thecodemesh.online/media/products/BIDG0412R03_1.jpg",
+  "solitaire":    "https://auric.thecodemesh.online/media/products/BIDG0412R02_1.jpg",
+  "for-her":      "https://auric.thecodemesh.online/media/products/BISP0428N44_1.jpg",
+  "for-him":      "https://auric.thecodemesh.online/media/products/JS00777_1.jpg",
+  "best-sellers": "https://auric.thecodemesh.online/media/products/KE07049_1.jpg",
 };
+
+// Maps category slug → CATALOG key for price/popular data in captions
+const CATEGORY_TO_CATALOG = {
+  "rings":        "diamond_rings",
+  "earrings":     "earrings",
+  "necklaces":    "gold_necklaces",
+  "pendants":     "gold_necklaces",
+  "chains":       "men",
+  "bracelets":    "bangles",
+  "bangles":      "bangles",
+  "solitaire":    "solitaire",
+  "for-her":      "bridal_sets",
+  "for-him":      "men",
+  "best-sellers": "diamond_rings",
+};
+
+function buildImageCaption(categorySlug) {
+  const catInfo = CATEGORIES[categorySlug];
+  const catalogInfo = CATALOG[CATEGORY_TO_CATALOG[categorySlug]];
+  const lines = [];
+  if (catInfo)    lines.push(`${catInfo.emoji} ${catInfo.label} | Auric Jewels, Gurugram`);
+  if (catalogInfo) {
+    lines.push(`Price: ${catalogInfo.range}`);
+    lines.push(`Popular: ${catalogInfo.popular}`);
+  }
+  lines.push("");
+  lines.push("📅 Book a private appointment: wa.me/919012495941");
+  lines.push("🌐 www.auricjewels.com");
+  return lines.join("\n");
+}
 
 // ─── System Prompt ──────────────────────────────────────────
 const SYSTEM_PROMPT = `You are the virtual jewellery consultant for Auric Jewels, a luxury gold and diamond jewellery showroom in Sector 45, Gurugram.
@@ -261,13 +291,19 @@ async function sendWelcomeMenu(to, name) {
   ]);
 }
 
-// ─── Handle Category Response (Link + Text + Buttons) ───────
+// ─── Handle Category Response (Image + Text + Buttons) ──────
 async function handleCategoryResponse(to, text, categorySlug) {
   const catInfo = CATEGORIES[categorySlug];
+  const imgUrl  = PRODUCT_IMAGES[categorySlug];
 
+  // 1. Send product image with price + CTA caption
+  if (imgUrl) {
+    await sendImage(to, imgUrl, buildImageCaption(categorySlug));
+  }
+
+  // 2. Send Gemini text reply + action buttons
   if (catInfo) {
-    // Send text with website link
-    const fullMsg = `${text}\n\n${catInfo.emoji} *Browse ${catInfo.label}:*\n${catInfo.url}`;
+    const fullMsg = `${text}\n\n${catInfo.emoji} Browse ${catInfo.label}:\n${catInfo.url}`;
     await sendButtons(to, fullMsg, [
       { id: `cat_${categorySlug}`, title: `${catInfo.emoji} View More` },
       { id: "book_appointment", title: "📅 Book Visit" },
@@ -380,7 +416,7 @@ module.exports = async function handler(req, res) {
           "bangles": ["bangle", "bangles", "chudi"],
           "solitaire": ["solitaire", "solitaires"],
           "for-her": ["for her", "women", "ladies", "bridal", "bride", "wedding"],
-          "for-him": ["for him", "men", "gents", "male"],
+          "for-him": ["for him", "men", "gents", "male", "mens", "men's", "groom"],
           "best-sellers": ["best seller", "bestseller", "popular", "trending"],
         };
 
