@@ -1,36 +1,75 @@
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
+const VERIFY_TOKEN    = process.env.VERIFY_TOKEN;
+const WHATSAPP_TOKEN  = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const GOOGLE_SHEETS_URL = process.env.GOOGLE_SHEETS_URL;
 
 // ─── Auric Jewels System Prompt ──────────────────────────────
-const SYSTEM_PROMPT = `You are a helpful assistant for Auric Jewels, a luxury gold and diamond jewellery showroom in Gurgaon.
+const SYSTEM_PROMPT = `You are a WhatsApp assistant for Auric Jewels, a luxury gold and diamond jewellery showroom in Gurgaon.
 
 About the showroom:
 - Name: Auric Jewels
 - Location: Greenwood Plaza, Sector 45, Gurgaon
 - WhatsApp: +91 90124 95941
 - Website: auricjewels.com
-- Products: Gold jewellery, Diamond jewellery, Solitaire rings, Bridal sets, Platinum jewellery
+- Products: Gold, Diamond, Solitaire, Bridal, Platinum jewellery
 - Price range: Rs.20,000 to Rs.2,00,000+
 - Inventory: Rs.50 Crore worth of jewellery
 
-Rules:
-- Always reply in the same language the customer uses (Hindi, English, or Hinglish)
-- Never use words like cheap, affordable, budget
-- For location queries: share 'Greenwood Plaza, Sector 45, Gurgaon' and suggest Google Maps
-- For appointment: share +91 90124 95941
-- For gold rate: say current 22KT gold rate is approximately Rs.7,200 per gram (update daily)
-- For making charges: typically 8-15% depending on design complexity
-- For purity: we offer 18KT, 22KT gold and 950 platinum
-- Be warm, professional, luxury brand tone
-- Keep replies concise and helpful
-- Never output JSON, code blocks, or structured data — only plain conversational text`;
+Rules (STRICTLY FOLLOW):
+1. NEVER use markdown: no **, no ##, no ---, no bullet dashes, no backticks, no headers
+2. Use emojis for structure instead of markdown symbols
+3. Keep every reply to 4-5 lines maximum — be concise
+4. Reply in the same language the customer uses (Hindi, English, or Hinglish)
+5. Never use words like cheap, affordable, budget
+6. For location queries: Greenwood Plaza, Sector 45, Gurgaon
+7. For appointment: +91 90124 95941
+8. Current 22KT gold rate: approximately Rs.7,200 per gram
+9. Making charges: typically 8-15% depending on design
+10. Purity: 18KT, 22KT gold and 950 platinum
+11. Warm, professional, luxury tone — short and helpful
+12. Never output JSON, code blocks, or any structured data`;
+
+// ─── Price Breakup Templates ─────────────────────────────────
+function buildPriceBreakup(userText) {
+  const lower = userText.toLowerCase();
+
+  // Try to extract weight from message e.g. "5 gram", "5g", "2.5 gm"
+  const wtMatch = userText.match(/(\d+\.?\d*)\s*(gram|grams|gm|g)\b/i);
+  const weight = wtMatch ? parseFloat(wtMatch[1]) : null;
+
+  const goldRate = 7200; // Rs per gram, 22KT
+
+  if (weight) {
+    const goldCost   = Math.round(goldRate * weight);
+    const making     = Math.round(goldCost * 0.12); // 12% making
+    const subtotal   = goldCost + making;
+    const gst        = Math.round(subtotal * 0.03);
+    const total      = subtotal + gst;
+    return (
+      `💰 Price Breakup (approx ${weight}g):\n\n` +
+      `🪙 Gold: Rs.${goldRate}/g × ${weight}g = Rs.${goldCost.toLocaleString('en-IN')}\n` +
+      `🔨 Making: 12% = Rs.${making.toLocaleString('en-IN')}\n` +
+      `📋 GST: 3% = Rs.${gst.toLocaleString('en-IN')}\n` +
+      `✅ Total: ~Rs.${total.toLocaleString('en-IN')}\n\n` +
+      `📞 Exact price on WhatsApp: +91 90124 95941`
+    );
+  }
+
+  // Generic breakup without weight
+  return (
+    `💰 Price Breakup Formula:\n\n` +
+    `🪙 Gold: Rs.7,200/g × weight (22KT)\n` +
+    `🔨 Making Charges: 8–15% of gold value\n` +
+    `📋 GST: 3% on total\n` +
+    `✅ Total = Gold + Making + GST\n\n` +
+    `📞 Exact quote: +91 90124 95941`
+  );
+}
 
 // ─── Redis Helpers ───────────────────────────────────────────
 function getRedisConfig() {
-  const url = process.env.KV_REST_API_URL;
+  const url   = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
   if (url && token) return { url, token };
   return null;
@@ -57,37 +96,31 @@ async function loadHistory(phone) {
   try {
     const raw = await redisCmd(['GET', 'history:' + phone]);
     return raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    return [];
-  }
+  } catch (e) { return []; }
 }
 
 async function saveHistory(phone, messages) {
   try {
     await redisCmd(['SET', 'history:' + phone, JSON.stringify(messages), 'EX', '86400']);
-  } catch (e) {
-    console.log('History save error:', e.message);
-  }
+  } catch (e) { console.log('History save error:', e.message); }
 }
 
 async function storeMessage(phone, userMsg, botReply) {
   const cfg = getRedisConfig();
   if (!cfg) return;
   try {
-    const ts = Date.now();
+    const ts   = Date.now();
     const data = JSON.stringify({ phone, userMsg, botReply, timestamp: new Date().toISOString(), ts });
     await redisCmd(['SET', 'chat:' + phone + ':' + ts, data, 'EX', String(90 * 86400)]);
-    const raw = await redisCmd(['GET', 'contacts']);
+    const raw      = await redisCmd(['GET', 'contacts']);
     const contacts = raw ? JSON.parse(raw) : {};
     contacts[phone] = {
-      lastMsg: userMsg,
+      lastMsg:  userMsg,
       lastTime: new Date().toISOString(),
-      count: (contacts[phone] ? contacts[phone].count : 0) + 1
+      count:    (contacts[phone] ? contacts[phone].count : 0) + 1
     };
     await redisCmd(['SET', 'contacts', JSON.stringify(contacts)]);
-  } catch (e) {
-    console.log('storeMessage error:', e.message);
-  }
+  } catch (e) { console.log('storeMessage error:', e.message); }
 }
 
 async function logToSheets(data) {
@@ -98,13 +131,11 @@ async function logToSheets(data) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
-  } catch (e) {
-    console.error('Sheets log error:', e.message);
-  }
+  } catch (e) { console.error('Sheets log error:', e.message); }
 }
 
 // ─── In-memory Session (30-min TTL) ─────────────────────────
-const sessions = new Map();
+const sessions   = new Map();
 const SESSION_TTL = 30 * 60 * 1000;
 
 function getSession(phone) {
@@ -172,7 +203,7 @@ const CATEGORY_TO_CATALOG = {
 };
 
 function buildImageCaption(categorySlug) {
-  const catInfo = CATEGORIES[categorySlug];
+  const catInfo     = CATEGORIES[categorySlug];
   const catalogInfo = CATALOG[CATEGORY_TO_CATALOG[categorySlug]];
   const lines = [];
   if (catInfo) lines.push(catInfo.emoji + ' ' + catInfo.label + ' | Auric Jewels, Gurgaon');
@@ -186,9 +217,76 @@ function buildImageCaption(categorySlug) {
   return lines.join('\n');
 }
 
-// ─── Claude AI (claude-sonnet-4-20250514) with Redis History ─
+// ─── Claude Vision: Analyse Customer's Jewellery Photo ───────
+async function analyseJewelleryImage(mediaId) {
+  try {
+    // Step 1: Get the media URL from WhatsApp
+    const mediaResp = await fetch(
+      'https://graph.facebook.com/v21.0/' + mediaId,
+      { headers: { Authorization: 'Bearer ' + WHATSAPP_TOKEN } }
+    );
+    const mediaData = await mediaResp.json();
+    if (!mediaData.url) return null;
+
+    // Step 2: Download the image bytes
+    const imgResp = await fetch(mediaData.url, {
+      headers: { Authorization: 'Bearer ' + WHATSAPP_TOKEN }
+    });
+    if (!imgResp.ok) return null;
+
+    const mimeType = imgResp.headers.get('content-type') || 'image/jpeg';
+    const arrayBuf = await imgResp.arrayBuffer();
+    const base64   = Buffer.from(arrayBuf).toString('base64');
+
+    // Step 3: Send to Claude Vision
+    const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type':    'application/json',
+        'x-api-key':       ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model:      'claude-sonnet-4-20250514',
+        max_tokens: 250,
+        system: `You are a jewellery expert for Auric Jewels, Gurgaon.
+Analyse the jewellery in the image and reply in plain text (no markdown, no **, no ##).
+Keep reply to 4 lines max. Format:
+💍 Type: [jewellery type]
+🪙 Metal: [gold/diamond/platinum/silver etc]
+💰 Est. Price Range: [Rs.X to Rs.Y]
+📞 Visit us or WhatsApp for exact details: +91 90124 95941`,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type:   'image',
+              source: { type: 'base64', media_type: mimeType, data: base64 }
+            },
+            {
+              type: 'text',
+              text: 'Please identify this jewellery piece and give a price estimate.'
+            }
+          ]
+        }]
+      })
+    });
+
+    const claudeData = await claudeResp.json();
+    if (claudeData.error) {
+      console.error('Claude vision error:', JSON.stringify(claudeData.error));
+      return null;
+    }
+    return claudeData.content && claudeData.content[0] ? claudeData.content[0].text : null;
+
+  } catch (e) {
+    console.error('analyseJewelleryImage error:', e.message);
+    return null;
+  }
+}
+
+// ─── Claude AI (text, with Redis history) ───────────────────
 async function getClaudeResponse(session, userMessage, phone) {
-  // On cold start, restore conversation history from Redis
   if (!session.historyLoaded) {
     const redisHistory = await loadHistory(phone);
     if (redisHistory.length > 0) session.messages = redisHistory;
@@ -201,20 +299,19 @@ async function getClaudeResponse(session, userMessage, phone) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
+      'Content-Type':      'application/json',
+      'x-api-key':         ANTHROPIC_API_KEY,
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 400,
-      system: SYSTEM_PROMPT,
-      messages: session.messages
+      model:      'claude-sonnet-4-20250514',
+      max_tokens: 300,
+      system:     SYSTEM_PROMPT,
+      messages:   session.messages
     })
   });
 
   const data = await response.json();
-
   if (data.error) {
     console.error('Claude API error:', JSON.stringify(data.error));
     return null;
@@ -224,7 +321,6 @@ async function getClaudeResponse(session, userMessage, phone) {
 
   if (reply) {
     session.messages.push({ role: 'assistant', content: reply });
-    // Persist to Redis so history survives serverless cold starts
     await saveHistory(phone, session.messages);
   }
 
@@ -275,7 +371,9 @@ async function sendButtons(to, bodyText, buttons) {
         type: 'button',
         body: { text: bodyText },
         action: {
-          buttons: buttons.map(function(b) { return { type: 'reply', reply: { id: b.id, title: b.title } }; })
+          buttons: buttons.map(function(b) {
+            return { type: 'reply', reply: { id: b.id, title: b.title } };
+          })
         }
       }
     })
@@ -287,8 +385,8 @@ async function sendCategoryList(to) {
     const key = entry[0];
     const cat = entry[1];
     return {
-      id: 'cat_' + key,
-      title: cat.emoji + ' ' + cat.label,
+      id:          'cat_' + key,
+      title:       cat.emoji + ' ' + cat.label,
       description: (CATALOG[key] && CATALOG[key].range) ? CATALOG[key].range : 'Explore collection'
     };
   });
@@ -363,8 +461,8 @@ module.exports = async function handler(req, res) {
       const message = value && value.messages && value.messages[0];
       if (!message) return res.status(200).json({ status: 'no message' });
 
-      const from = message.from;
-      const session = getSession(from);
+      const from        = message.from;
+      const session     = getSession(from);
       const profileName = (value.contacts && value.contacts[0] &&
                            value.contacts[0].profile && value.contacts[0].profile.name)
         ? value.contacts[0].profile.name : null;
@@ -397,7 +495,7 @@ module.exports = async function handler(req, res) {
 
         if (btnId && btnId.indexOf('cat_') === 0) {
           const catKey = btnId.replace('cat_', '');
-          const cat = CATEGORIES[catKey];
+          const cat    = CATEGORIES[catKey];
           if (cat) {
             const reply = await getClaudeResponse(session, 'Show me ' + cat.label + ' collection with prices.', from);
             await handleCategoryResponse(from, reply, catKey);
@@ -414,11 +512,30 @@ module.exports = async function handler(req, res) {
 
         const lower = userText.toLowerCase();
 
-        // Greeting - show welcome menu
+        // Greeting — show welcome menu
         if (['hi', 'hello', 'hey', 'hii', 'hlo', 'menu', 'start', 'hyy', 'hy'].indexOf(lower) !== -1) {
           await sendWelcomeMenu(from, session.name);
           session.greeted = true;
           await storeMessage(from, userText, 'Welcome menu sent');
+          return res.status(200).json({ status: 'ok' });
+        }
+
+        // Price breakup intent — handle directly without Claude
+        const isPriceBreakup =
+          lower.includes('breakup') || lower.includes('break up') ||
+          lower.includes('breakdown') || lower.includes('break down') ||
+          lower.includes('calculate') ||
+          (lower.includes('price') && (lower.includes('detail') || lower.includes('how') || lower.includes('kitne'))) ||
+          (lower.includes('gold') && lower.includes('rate') && lower.includes('making'));
+
+        if (isPriceBreakup) {
+          const breakupMsg = buildPriceBreakup(userText);
+          await sendButtons(from, breakupMsg, [
+            { id: 'browse_catalog',   title: '💎 View Collections' },
+            { id: 'book_appointment', title: '📅 Visit Store' },
+            { id: 'bridal_inquiry',   title: '👰 Bridal Range' }
+          ]);
+          await storeMessage(from, userText, breakupMsg);
           return res.status(200).json({ status: 'ok' });
         }
 
@@ -461,7 +578,7 @@ module.exports = async function handler(req, res) {
         }
 
         // Get Claude AI response
-        const reply = await getClaudeResponse(session, userText, from);
+        const reply      = await getClaudeResponse(session, userText, from);
         const cleanReply = reply || 'Visit Auric Jewels at Greenwood Plaza, Sector 45, Gurgaon or WhatsApp +91 90124 95941 ✨';
 
         if (detectedCategory) {
@@ -503,17 +620,48 @@ module.exports = async function handler(req, res) {
         return res.status(200).json({ status: 'ok' });
       }
 
-      // ── Image/Document messages ──────────────────────────
-      if (message.type === 'image' || message.type === 'document') {
+      // ── Image messages — Claude Vision analysis ──────────
+      if (message.type === 'image') {
+        const mediaId = message.image && message.image.id;
+
+        if (mediaId) {
+          // Attempt Claude Vision analysis
+          const visionReply = await analyseJewelleryImage(mediaId);
+
+          if (visionReply) {
+            await sendButtons(from, visionReply, [
+              { id: 'book_appointment', title: '📅 Discuss in Store' },
+              { id: 'browse_catalog',   title: '💎 Browse Similar' }
+            ]);
+            await storeMessage(from, '[Sent jewellery image]', visionReply);
+            return res.status(200).json({ status: 'ok' });
+          }
+        }
+
+        // Fallback if vision fails
+        const fallback = session.name
+          ? session.name + ', lovely piece! 💎 Share the metal preference and occasion and we will suggest the perfect match. ✨'
+          : 'Lovely piece! 💎 Share the metal preference and occasion and we will suggest the perfect match. ✨';
+
+        await sendButtons(from, fallback, [
+          { id: 'book_appointment', title: '📅 Discuss in Store' },
+          { id: 'browse_catalog',   title: '💎 Browse Similar' }
+        ]);
+        await storeMessage(from, '[Sent jewellery image]', fallback);
+        return res.status(200).json({ status: 'ok' });
+      }
+
+      // ── Document messages ────────────────────────────────
+      if (message.type === 'document') {
         const reply = session.name
-          ? 'Thank you for sharing, ' + session.name + '! 💎 Our design team will review this. Share your metal preference or occasion and we will guide you. ✨'
-          : 'Thank you for sharing! 💎 Our design team will review this. Share your metal preference or occasion and we will guide you. ✨';
+          ? 'Thank you, ' + session.name + '! 💎 Our team will review this. WhatsApp us at +91 90124 95941 for details. ✨'
+          : 'Thank you! 💎 Our team will review this. WhatsApp us at +91 90124 95941 for details. ✨';
 
         await sendButtons(from, reply, [
           { id: 'book_appointment', title: '📅 Discuss in Store' },
           { id: 'browse_catalog',   title: '💎 Browse Similar' }
         ]);
-        await storeMessage(from, '[Sent image/document]', reply);
+        await storeMessage(from, '[Sent document]', reply);
         return res.status(200).json({ status: 'ok' });
       }
 
