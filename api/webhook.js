@@ -4,8 +4,59 @@ const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const GOOGLE_SHEETS_URL = process.env.GOOGLE_SHEETS_URL;
 
-// ─── Auric Jewels System Prompt ──────────────────────────────
-const SYSTEM_PROMPT = `You are a WhatsApp assistant for Auric Jewels, a luxury gold and diamond jewellery showroom in Gurgaon.
+const SALEOR_API_URL   = 'https://api.auricjewels.com/graphql/';
+const SALEOR_API_TOKEN = 'JzARNGBjDzxPDGQduuhYQq3abpOWKk';
+
+// ─── Fetch Live Gold Rates from Saleor Shop Metadata ────────
+// Metadata stores per-10g values. Divide by 10 to get per-gram.
+// Fallbacks are per-gram (1 June 2026 rates).
+async function fetchGoldRates() {
+  const fallback = { rate22k: 14525, rate18k: 11884, rate24k: 16037 };
+  try {
+    const resp = await fetch(SALEOR_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': 'Bearer ' + SALEOR_API_TOKEN
+      },
+      body: JSON.stringify({ query: '{ shop { metadata { key value } } }' })
+    });
+    const data = await resp.json();
+    const meta = (data && data.data && data.data.shop && data.data.shop.metadata) || [];
+    const find = function(key) {
+      const entry = meta.find(function(m) { return m.key === key; });
+      return entry ? parseFloat(entry.value) : null;
+    };
+    const findDate = function() {
+      const entry = meta.find(function(m) { return m.key === 'gold_rate_date'; });
+      return entry ? entry.value : null;
+    };
+    // Metadata values are per 10g — convert to per gram
+    const raw22k = find('gold_rate_22k');
+    const raw18k = find('gold_rate_18k');
+    const raw24k = find('gold_rate_24k');
+    return {
+      rate22k: raw22k ? Math.round(raw22k / 10) : fallback.rate22k,
+      rate18k: raw18k ? Math.round(raw18k / 10) : fallback.rate18k,
+      rate24k: raw24k ? Math.round(raw24k / 10) : fallback.rate24k,
+      rateDate: findDate() || 'today'
+    };
+  } catch (e) {
+    console.error('fetchGoldRates error:', e.message);
+    return fallback;
+  }
+}
+
+// ─── Auric Jewels System Prompt (built with live gold rate) ──
+function buildSystemPrompt(goldRate22k) {
+  const rateStr = goldRate22k
+    ? 'Rs.' + goldRate22k.toLocaleString('en-IN') + ' per gram (live rate)'
+    : 'approximately Rs.14,525 per gram';
+  return buildSystemPromptStr(rateStr);
+}
+
+function buildSystemPromptStr(rateStr) {
+  return `You are a WhatsApp assistant for Auric Jewels, a luxury gold and diamond jewellery showroom in Gurgaon.
 
 About the showroom:
 - Name: Auric Jewels
@@ -24,31 +75,48 @@ Rules (STRICTLY FOLLOW):
 5. Never use words like cheap, affordable, budget
 6. For location queries: Greenwood Plaza, Sector 45, Gurgaon
 7. For appointment: +91 90124 95941
-8. Current 22KT gold rate: approximately Rs.7,200 per gram
+8. Current 22KT gold rate: ${rateStr}
 9. Making charges: typically 8-15% depending on design
 10. Purity: 18KT, 22KT gold and 950 platinum
 11. Warm, professional, luxury tone — short and helpful
 12. Never output JSON, code blocks, or any structured data`;
+}
 
-// ─── Price Breakup Templates ─────────────────────────────────
-function buildPriceBreakup(userText) {
+const SYSTEM_PROMPT = buildSystemPromptStr('approximately Rs.14,525 per gram');
+
+// ─── Price Breakup — uses live gold rate from Saleor ─────────
+async function buildPriceBreakup(userText) {
+  const rates = await fetchGoldRates();
+
+  // Detect karat preference in message (default 22K)
   const lower = userText.toLowerCase();
+  let goldRate, karatLabel;
+  if (lower.includes('18k') || lower.includes('18kt') || lower.includes('18 k')) {
+    goldRate   = rates.rate18k;
+    karatLabel = '18KT';
+  } else if (lower.includes('24k') || lower.includes('24kt') || lower.includes('24 k')) {
+    goldRate   = rates.rate24k;
+    karatLabel = '24KT';
+  } else {
+    goldRate   = rates.rate22k;
+    karatLabel = '22KT';
+  }
 
   // Try to extract weight from message e.g. "5 gram", "5g", "2.5 gm"
   const wtMatch = userText.match(/(\d+\.?\d*)\s*(gram|grams|gm|g)\b/i);
-  const weight = wtMatch ? parseFloat(wtMatch[1]) : null;
+  const weight  = wtMatch ? parseFloat(wtMatch[1]) : null;
 
-  const goldRate = 7200; // Rs per gram, 22KT
+  const dateStr = rates.rateDate ? ' (' + rates.rateDate + ')' : '';
 
   if (weight) {
-    const goldCost   = Math.round(goldRate * weight);
-    const making     = Math.round(goldCost * 0.12); // 12% making
-    const subtotal   = goldCost + making;
-    const gst        = Math.round(subtotal * 0.03);
-    const total      = subtotal + gst;
+    const goldCost = Math.round(goldRate * weight);
+    const making   = Math.round(goldCost * 0.12);
+    const subtotal = goldCost + making;
+    const gst      = Math.round(subtotal * 0.03);
+    const total    = subtotal + gst;
     return (
-      `💰 Price Breakup (approx ${weight}g):\n\n` +
-      `🪙 Gold: Rs.${goldRate}/g × ${weight}g = Rs.${goldCost.toLocaleString('en-IN')}\n` +
+      `💰 Price Breakup${dateStr} — ${weight}g ${karatLabel}:\n\n` +
+      `🪙 Gold: Rs.${goldRate.toLocaleString('en-IN')}/g × ${weight}g = Rs.${goldCost.toLocaleString('en-IN')}\n` +
       `🔨 Making: 12% = Rs.${making.toLocaleString('en-IN')}\n` +
       `📋 GST: 3% = Rs.${gst.toLocaleString('en-IN')}\n` +
       `✅ Total: ~Rs.${total.toLocaleString('en-IN')}\n\n` +
@@ -58,11 +126,11 @@ function buildPriceBreakup(userText) {
 
   // Generic breakup without weight
   return (
-    `💰 Price Breakup Formula:\n\n` +
-    `🪙 Gold: Rs.7,200/g × weight (22KT)\n` +
+    `💰 Today's Gold Rates${dateStr}:\n\n` +
+    `🪙 22KT: Rs.${rates.rate22k.toLocaleString('en-IN')}/gram\n` +
+    `🪙 18KT: Rs.${rates.rate18k.toLocaleString('en-IN')}/gram\n` +
     `🔨 Making Charges: 8–15% of gold value\n` +
-    `📋 GST: 3% on total\n` +
-    `✅ Total = Gold + Making + GST\n\n` +
+    `📋 GST: 3% on total\n\n` +
     `📞 Exact quote: +91 90124 95941`
   );
 }
@@ -286,7 +354,7 @@ Keep reply to 4 lines max. Format:
 }
 
 // ─── Claude AI (text, with Redis history) ───────────────────
-async function getClaudeResponse(session, userMessage, phone) {
+async function getClaudeResponse(session, userMessage, phone, systemPrompt) {
   if (!session.historyLoaded) {
     const redisHistory = await loadHistory(phone);
     if (redisHistory.length > 0) session.messages = redisHistory;
@@ -306,7 +374,7 @@ async function getClaudeResponse(session, userMessage, phone) {
     body: JSON.stringify({
       model:      'claude-sonnet-4-20250514',
       max_tokens: 300,
-      system:     SYSTEM_PROMPT,
+      system:     systemPrompt || SYSTEM_PROMPT,
       messages:   session.messages
     })
   });
@@ -463,6 +531,10 @@ module.exports = async function handler(req, res) {
 
       const from        = message.from;
       const session     = getSession(from);
+
+      // Fetch live gold rates once per request — used by system prompt + price breakup
+      const liveRates    = await fetchGoldRates();
+      const liveSystemPrompt = buildSystemPrompt(liveRates.rate22k);
       const profileName = (value.contacts && value.contacts[0] &&
                            value.contacts[0].profile && value.contacts[0].profile.name)
         ? value.contacts[0].profile.name : null;
@@ -480,14 +552,14 @@ module.exports = async function handler(req, res) {
         }
 
         if (btnId === 'book_appointment') {
-          const reply = await getClaudeResponse(session, 'I want to book an appointment to visit the showroom.', from);
+          const reply = await getClaudeResponse(session, 'I want to book an appointment to visit the showroom.', from, liveSystemPrompt);
           await sendText(from, reply || 'To book an appointment, please WhatsApp us at +91 90124 95941. We look forward to welcoming you! ✨');
           await storeMessage(from, '[Tapped: Book Appointment]', reply);
           return res.status(200).json({ status: 'ok' });
         }
 
         if (btnId === 'bridal_inquiry') {
-          const reply = await getClaudeResponse(session, 'I am looking for bridal jewellery for my wedding.', from);
+          const reply = await getClaudeResponse(session, 'I am looking for bridal jewellery for my wedding.', from, liveSystemPrompt);
           await handleCategoryResponse(from, reply, 'for-her');
           await storeMessage(from, '[Tapped: Bridal Jewellery]', reply);
           return res.status(200).json({ status: 'ok' });
@@ -497,7 +569,7 @@ module.exports = async function handler(req, res) {
           const catKey = btnId.replace('cat_', '');
           const cat    = CATEGORIES[catKey];
           if (cat) {
-            const reply = await getClaudeResponse(session, 'Show me ' + cat.label + ' collection with prices.', from);
+            const reply = await getClaudeResponse(session, 'Show me ' + cat.label + ' collection with prices.', from, liveSystemPrompt);
             await handleCategoryResponse(from, reply, catKey);
             await storeMessage(from, '[Selected: ' + cat.label + ']', reply);
             return res.status(200).json({ status: 'ok' });
@@ -529,7 +601,7 @@ module.exports = async function handler(req, res) {
           (lower.includes('gold') && lower.includes('rate') && lower.includes('making'));
 
         if (isPriceBreakup) {
-          const breakupMsg = buildPriceBreakup(userText);
+          const breakupMsg = await buildPriceBreakup(userText);
           await sendButtons(from, breakupMsg, [
             { id: 'browse_catalog',   title: '💎 View Collections' },
             { id: 'book_appointment', title: '📅 Visit Store' },
@@ -578,7 +650,7 @@ module.exports = async function handler(req, res) {
         }
 
         // Get Claude AI response
-        const reply      = await getClaudeResponse(session, userText, from);
+        const reply      = await getClaudeResponse(session, userText, from, liveSystemPrompt);
         const cleanReply = reply || 'Visit Auric Jewels at Greenwood Plaza, Sector 45, Gurgaon or WhatsApp +91 90124 95941 ✨';
 
         if (detectedCategory) {
