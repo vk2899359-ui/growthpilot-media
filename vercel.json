@@ -1,3 +1,10 @@
 {
-  "version": 2
+  "version": 2,
+  "routes": [
+    { "src": "/api/webhook",        "dest": "/api/webhook.js" },
+    { "src": "/api/conversations",  "dest": "/api/conversations.js" },
+    { "src": "/api/dashboard",      "dest": "/api/dashboard.js" },
+    { "src": "/api/dashboard-feed", "dest": "/api/dashboard-feed.js" },
+    { "src": "/api/send-reply",     "dest": "/api/send-reply.js" }
+  ]
 }

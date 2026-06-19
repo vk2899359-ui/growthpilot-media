@@ -135,6 +135,17 @@ async function buildPriceBreakup(userText) {
   );
 }
 
+// ─── Intent Detection ────────────────────────────────────────
+const HOT_KEYWORDS  = ['book', 'appointment', 'visit', 'showroom', 'kab', 'aana', 'price', 'kitna', 'rate', 'kitne', 'aao', 'milna', 'bulao', 'call me', 'contact'];
+const WARM_KEYWORDS = ['ring', 'necklace', 'earring', 'bangle', 'bracelet', 'pendant', 'chain', 'solitaire', 'bridal', 'wedding', 'gold', 'diamond', 'platinum', 'design', 'collection', 'show', 'photo', 'image', 'catalog'];
+
+function detectIntent(text) {
+  const lower = (text || '').toLowerCase();
+  if (HOT_KEYWORDS.some(function(w) { return lower.includes(w); })) return 'hot';
+  if (WARM_KEYWORDS.some(function(w) { return lower.includes(w); })) return 'warm';
+  return 'cold';
+}
+
 // ─── Redis Helpers ───────────────────────────────────────────
 function getRedisConfig() {
   const url   = process.env.KV_REST_API_URL;
@@ -171,6 +182,32 @@ async function saveHistory(phone, messages) {
   try {
     await redisCmd(['SET', 'history:' + phone, JSON.stringify(messages), 'EX', '86400']);
   } catch (e) { console.log('History save error:', e.message); }
+}
+
+// ─── Feed Storage (enriched format for dashboard) ────────────
+async function storeFeedMessage(phone, name, message, type, imageUrl) {
+  const cfg = getRedisConfig();
+  if (!cfg) return;
+  try {
+    const ts     = Date.now();
+    const intent = detectIntent(message);
+    const record = JSON.stringify({
+      from:      phone,
+      name:      name || null,
+      message:   message || '',
+      timestamp: new Date().toISOString(),
+      ts:        ts,
+      type:      type || 'text',
+      intent:    intent,
+      imageUrl:  imageUrl || null
+    });
+    await redisCmd(['SET', 'feed:' + phone + ':' + ts, record, 'EX', String(90 * 86400)]);
+
+    // Flag hot leads separately for quick lookup
+    if (intent === 'hot') {
+      await redisCmd(['SET', 'lead:' + phone, JSON.stringify({ phone, name, lastHotMsg: message, ts: ts, flaggedAt: new Date().toISOString() }), 'EX', String(30 * 86400)]);
+    }
+  } catch (e) { console.log('storeFeedMessage error:', e.message); }
 }
 
 async function storeMessage(phone, userMsg, botReply) {
@@ -548,6 +585,7 @@ module.exports = async function handler(req, res) {
         if (btnId === 'browse_catalog') {
           await sendCategoryList(from);
           await storeMessage(from, '[Tapped: Browse Collection]', 'Sent category list');
+          await storeFeedMessage(from, session.name, 'Browse Collection', 'text', null);
           return res.status(200).json({ status: 'ok' });
         }
 
@@ -555,6 +593,7 @@ module.exports = async function handler(req, res) {
           const reply = await getClaudeResponse(session, 'I want to book an appointment to visit the showroom.', from, liveSystemPrompt);
           await sendText(from, reply || 'To book an appointment, please WhatsApp us at +91 90124 95941. We look forward to welcoming you! ✨');
           await storeMessage(from, '[Tapped: Book Appointment]', reply);
+          await storeFeedMessage(from, session.name, 'book appointment', 'text', null);
           return res.status(200).json({ status: 'ok' });
         }
 
@@ -562,6 +601,7 @@ module.exports = async function handler(req, res) {
           const reply = await getClaudeResponse(session, 'I am looking for bridal jewellery for my wedding.', from, liveSystemPrompt);
           await handleCategoryResponse(from, reply, 'for-her');
           await storeMessage(from, '[Tapped: Bridal Jewellery]', reply);
+          await storeFeedMessage(from, session.name, 'bridal jewellery inquiry', 'text', null);
           return res.status(200).json({ status: 'ok' });
         }
 
@@ -572,6 +612,7 @@ module.exports = async function handler(req, res) {
             const reply = await getClaudeResponse(session, 'Show me ' + cat.label + ' collection with prices.', from, liveSystemPrompt);
             await handleCategoryResponse(from, reply, catKey);
             await storeMessage(from, '[Selected: ' + cat.label + ']', reply);
+            await storeFeedMessage(from, session.name, cat.label + ' collection', 'text', null);
             return res.status(200).json({ status: 'ok' });
           }
         }
@@ -589,6 +630,7 @@ module.exports = async function handler(req, res) {
           await sendWelcomeMenu(from, session.name);
           session.greeted = true;
           await storeMessage(from, userText, 'Welcome menu sent');
+          await storeFeedMessage(from, session.name, userText, 'text', null);
           return res.status(200).json({ status: 'ok' });
         }
 
@@ -687,6 +729,7 @@ module.exports = async function handler(req, res) {
         }
 
         await storeMessage(from, userText, cleanReply);
+        await storeFeedMessage(from, session.name, userText, 'text', null);
         logToSheets({ name: session.name, phone: from, source: 'WhatsApp Bot', query: userText, reply: cleanReply.substring(0, 200) });
 
         return res.status(200).json({ status: 'ok' });
@@ -694,9 +737,17 @@ module.exports = async function handler(req, res) {
 
       // ── Image messages — Claude Vision analysis ──────────
       if (message.type === 'image') {
-        const mediaId = message.image && message.image.id;
+        const mediaId  = message.image && message.image.id;
+        let   imageUrl = null;
 
         if (mediaId) {
+          // Resolve Media URL for storage
+          try {
+            const mResp = await fetch('https://graph.facebook.com/v21.0/' + mediaId, { headers: { Authorization: 'Bearer ' + WHATSAPP_TOKEN } });
+            const mData = await mResp.json();
+            if (mData.url) imageUrl = mData.url;
+          } catch (e) { /* non-fatal */ }
+
           // Attempt Claude Vision analysis
           const visionReply = await analyseJewelleryImage(mediaId);
 
@@ -706,6 +757,7 @@ module.exports = async function handler(req, res) {
               { id: 'browse_catalog',   title: '💎 Browse Similar' }
             ]);
             await storeMessage(from, '[Sent jewellery image]', visionReply);
+            await storeFeedMessage(from, session.name, '[Sent jewellery image]', 'image', imageUrl);
             return res.status(200).json({ status: 'ok' });
           }
         }
@@ -720,6 +772,7 @@ module.exports = async function handler(req, res) {
           { id: 'browse_catalog',   title: '💎 Browse Similar' }
         ]);
         await storeMessage(from, '[Sent jewellery image]', fallback);
+        await storeFeedMessage(from, session.name, '[Sent jewellery image]', 'image', imageUrl);
         return res.status(200).json({ status: 'ok' });
       }
 
